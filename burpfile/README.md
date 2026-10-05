@@ -23,6 +23,7 @@ controlled samples for every command — `metadata`, `inspect proxy|repeater|tar
 | `json.go`        | JSON view types (fields alphabetically ordered to match `sort_keys`) |
 | `export.go`      | Unified base64 HTTP message export (prub exporter port)              |
 | `cmd/prub`       | urfave/cli command replicating the prub Python CLI                   |
+| `cmd/prub-tui`   | Bubbletea v2 viewer: tool menu, content lists, metadata, raw detail  |
 
 ## Usage
 
@@ -32,7 +33,16 @@ go build -o prub ./cmd/prub
 ./prub inspect target ../2026-09-23.burp
 ./prub record ../2026-09-23.burp 0x6a07e     # decimal, 0x…, 0b…, 0o…
 ./prub export ../2026-09-23.burp out.json
+
+# interactive viewer (Bubbletea v2)
+CGO_ENABLED=0 go build -o prub-tui ./cmd/prub-tui
+./prub-tui ../2026-09-23.burp
 ```
+
+TUI key map: `↑/↓` or `j/k` move · `enter` open · `esc` back ·
+`pgup/pgdn` page · `g/G` top/bottom (detail) · `q` quit.
+Tools whose structures are not mapped yet (Intruder, Scope) appear in the
+menu with an explanation instead of a list.
 
 Library entry points for future TUI/FUSE/web consumers:
 
