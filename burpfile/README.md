@@ -23,7 +23,7 @@ controlled samples for every command — `metadata`, `inspect proxy|repeater|tar
 | `json.go`        | JSON view types (fields alphabetically ordered to match `sort_keys`) |
 | `export.go`      | Unified base64 HTTP message export (prub exporter port)              |
 | `cmd/prub`       | urfave/cli command replicating the prub Python CLI                   |
-| `cmd/prub-tui`   | Bubbletea v2 viewer: tool menu, content lists, metadata, raw detail  |
+| `cmd/prub-tui`   | Bubbletea v2 + Lipgloss v2 viewer: tool menu, lists, metadata, detail |
 
 ## Usage
 

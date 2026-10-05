@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	burpfile "burpfile"
 )
@@ -59,9 +60,23 @@ type tool struct {
 	entries []entry
 }
 
+type lineKind int
+
+const (
+	lineNormal lineKind = iota
+	lineContext
+	lineRequest
+	lineResponse
+)
+
+type detailLine struct {
+	text string
+	kind lineKind
+}
+
 type detail struct {
 	title string
-	lines []string
+	lines []detailLine
 }
 
 type model struct {
@@ -76,7 +91,7 @@ type model struct {
 	tools        map[string]*tool
 	current      *tool
 	detail       *detail
-	metadataView []string
+	metadataView []metadataRow
 
 	width  int
 	height int
@@ -182,7 +197,7 @@ func (m *model) activate() {
 		selected := m.menu[m.cursor]
 		switch selected.kind {
 		case kindMetadata:
-			m.metadataView = buildMetadataLines(m.project, m.metadata)
+			m.metadataView = buildMetadataRows(m.project, m.metadata)
 			m.screen = screenMetadata
 		case kindTool:
 			view, err := m.toolView(selected.tool)
@@ -216,34 +231,40 @@ func (m *model) toolView(name string) (*tool, error) {
 		return cached, nil
 	}
 	var (
-		tool *tool
+		view *tool
 		err  error
 	)
 	switch name {
 	case "proxy":
-		tool, err = buildProxyTool(m.project)
+		view, err = buildProxyTool(m.project)
 	case "repeater":
-		tool, err = buildRepeaterTool(m.project)
+		view, err = buildRepeaterTool(m.project)
 	case "target":
-		tool, err = buildTargetTool(m.project)
+		view, err = buildTargetTool(m.project)
 	}
 	if err != nil {
 		return nil, err
 	}
-	m.tools[name] = tool
-	return tool, nil
+	m.tools[name] = view
+	return view, nil
 }
 
 func (m *model) buildDetail(e entry) *detail {
-	d := &detail{title: e.label, lines: []string{}}
-	d.lines = append(d.lines, e.context...)
+	d := &detail{title: e.label, lines: []detailLine{}}
+	for _, line := range e.context {
+		d.lines = append(d.lines, detailLine{text: line, kind: lineContext})
+	}
 	reqLabel, reqLines := m.payloadSection(e.request)
-	d.lines = append(d.lines, "REQUEST — "+reqLabel)
-	d.lines = append(d.lines, reqLines...)
-	d.lines = append(d.lines, "")
+	d.lines = append(d.lines, detailLine{text: "REQUEST — " + reqLabel, kind: lineRequest})
+	for _, line := range reqLines {
+		d.lines = append(d.lines, detailLine{text: line, kind: lineNormal})
+	}
+	d.lines = append(d.lines, detailLine{})
 	respLabel, respLines := m.payloadSection(e.response)
-	d.lines = append(d.lines, "RESPONSE — "+respLabel)
-	d.lines = append(d.lines, respLines...)
+	d.lines = append(d.lines, detailLine{text: "RESPONSE — " + respLabel, kind: lineResponse})
+	for _, line := range respLines {
+		d.lines = append(d.lines, detailLine{text: line, kind: lineNormal})
+	}
 	return d
 }
 
@@ -261,6 +282,8 @@ func (m *model) payloadSection(address *int64) (string, []string) {
 }
 
 // ------------------------------------------------------------- data views --
+
+type metadataRow struct{ label, value string }
 
 func buildProxyTool(project *burpfile.Project) (*tool, error) {
 	info, err := project.Proxy()
@@ -410,12 +433,12 @@ func buildTargetTool(project *burpfile.Project) (*tool, error) {
 		})
 	}
 	t.summary = fmt.Sprintf(
-		"%d nodes · %d with messages · %d with stored bytes",
+		"%d nodes · %d with messages · %d with bytes",
 		len(info.Nodes), withMessages, withBytes)
 	return t, nil
 }
 
-func buildMetadataLines(project *burpfile.Project, metadata *burpfile.Metadata) []string {
+func buildMetadataRows(project *burpfile.Project, metadata *burpfile.Metadata) []metadataRow {
 	header := project.Header()
 	stringOr := func(s *string) string {
 		if s == nil {
@@ -423,7 +446,7 @@ func buildMetadataLines(project *burpfile.Project, metadata *burpfile.Metadata) 
 		}
 		return *s
 	}
-	rows := [][2]string{
+	return []metadataRow{
 		{"Project name", stringOr(metadata.ProjectName)},
 		{"Installation ID", stringOr(metadata.InstallationID)},
 		{"Project identifier", stringOr(metadata.ProjectIdentifier)},
@@ -436,14 +459,32 @@ func buildMetadataLines(project *burpfile.Project, metadata *burpfile.Metadata) 
 		{"Project root", strconv.FormatInt(header.ProjectRoot, 10)},
 		{"Outer version", strconv.FormatInt(int64(header.OuterVersion), 10)},
 	}
-	lines := make([]string, 0, len(rows))
-	for _, row := range rows {
-		lines = append(lines, fmt.Sprintf("%-26s %s", row[0]+":", row[1]))
-	}
-	return lines
 }
 
 // ------------------------------------------------------------------ view --
+
+var (
+	styleAppTitle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#38BDF8")) // sky-400
+	styleSubtitle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#E2E8F0")) // slate-200
+	styleSummary = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#38BDF8"))
+	styleDim      = lipgloss.NewStyle().Faint(true)
+	styleSelected = lipgloss.NewStyle().
+			Background(lipgloss.Color("#0369A1")). // sky-700
+			Foreground(lipgloss.Color("#F8FAFC"))  // slate-50
+	styleError = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#F87171")) // red-400
+	styleRequest  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#4ADE80")) // green-400
+	styleResponse = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#C084FC")) // purple-400
+	styleEmpty    = lipgloss.NewStyle().Italic(true).Faint(true)
+	styleFooter   = lipgloss.NewStyle().
+			Background(lipgloss.Color("#0F172A")). // slate-900
+			Foreground(lipgloss.Color("#94A3B8"))  // slate-400
+)
 
 func (m *model) View() tea.View {
 	return tea.View{Content: m.render(), AltScreen: true}
@@ -451,13 +492,15 @@ func (m *model) View() tea.View {
 
 func (m *model) render() string {
 	var b strings.Builder
-	b.WriteString(m.headerLine())
+	b.WriteString(m.header())
+	b.WriteString("\n")
+	b.WriteString(styleDim.Render(strings.Repeat("─", max(0, m.width))))
 	b.WriteString("\n\n")
 	switch m.screen {
 	case screenMenu:
 		m.renderMenu(&b)
 	case screenMetadata:
-		m.renderText(&b, m.metadataView)
+		m.renderMetadata(&b)
 	case screenList:
 		m.renderList(&b)
 	case screenDetail:
@@ -470,46 +513,49 @@ func (m *model) render() string {
 	return b.String()
 }
 
-func (m *model) headerLine() string {
-	name := "(unknown)"
+// header renders the top bar: left context, right-aligned summary.
+func (m *model) header() string {
+	app := styleAppTitle.Render("prub-tui")
+	name := styleSubtitle.Render("(unknown)")
 	if m.metadata != nil && m.metadata.ProjectName != nil {
-		name = *m.metadata.ProjectName
+		name = styleSubtitle.Render(*m.metadata.ProjectName)
 	}
-	title := "prub-tui"
+	left := app + styleDim.Render(" · ") + name
+	var right string
 	switch m.screen {
 	case screenList:
 		if m.current != nil {
-			title += " — " + m.current.title
-			if m.current.summary != "" {
-				title += "  (" + m.current.summary + ")"
-			}
+			left += styleDim.Render(" — ") + styleSubtitle.Render(m.current.title)
+			right = styleSummary.Render(m.current.summary)
 		}
 	case screenDetail:
 		if m.detail != nil {
-			title += " — " + m.detail.title
+			left += styleDim.Render(" — ") + styleSubtitle.Render(m.detail.title)
 		}
 	case screenMetadata:
-		title += " — project metadata"
+		left += styleDim.Render(" — ") + styleSubtitle.Render("project metadata")
 	}
-	return bold(truncate(fmt.Sprintf("%s  ·  %s", title, name), m.width))
+	return joinSides(left, right, m.width)
 }
 
 func (m *model) renderMenu(b *strings.Builder) {
 	rows := make([]string, 0, len(m.menu))
 	for i, entry := range m.menu {
-		line := fmt.Sprintf("%-20s %s", entry.label, entry.description)
-		rows = append(rows, m.row(i, line))
+		label := truncate(entry.label, max(0, m.width-2-utf8.RuneCountInString(entry.description)))
+		line := label + strings.Repeat(" ", 2+max(0, 20-utf8.RuneCountInString(label))) +
+			styleDim.Render(entry.description)
+		rows = append(rows, m.listRow(i, line))
 	}
 	b.WriteString(strings.Join(rows, "\n"))
 }
 
 func (m *model) renderList(b *strings.Builder) {
 	if m.current == nil {
-		b.WriteString("(nothing loaded)")
+		b.WriteString(styleEmpty.Render("(nothing loaded)"))
 		return
 	}
 	if len(m.current.entries) == 0 {
-		b.WriteString("(no stored content for this tool)")
+		b.WriteString(styleEmpty.Render("(no stored content for this tool)"))
 		return
 	}
 	visible := m.visibleRows()
@@ -517,27 +563,33 @@ func (m *model) renderList(b *strings.Builder) {
 	last := min(first+visible, len(m.current.entries))
 	rows := make([]string, 0, last-first)
 	for i := first; i < last; i++ {
-		e := m.current.entries[i]
-		rows = append(rows, m.row(i, m.entryLine(e)))
+		label, sub := m.entryLine(m.current.entries[i])
+		rows = append(rows, m.listRow(i, label+styleDim.Render(sub)))
 	}
 	b.WriteString(strings.Join(rows, "\n"))
 }
 
-func (m *model) entryLine(e entry) string {
-	line := e.label
-	if e.sub != "" {
-		avail := m.width - utf8.RuneCountInString(e.sub) - 2
-		line = truncate(e.label, avail)
-		if pad := m.width - utf8.RuneCountInString(line) - utf8.RuneCountInString(e.sub); pad > 0 {
-			line += strings.Repeat(" ", pad) + e.sub
-		}
+// entryLine composes the plain-text list row: label left, sub right.
+func (m *model) entryLine(e entry) (string, string) {
+	if e.sub == "" {
+		return truncate(e.label, m.width), ""
+	}
+	subWidth := lipgloss.Width(e.sub)
+	label := truncate(e.label, max(0, m.width-subWidth-2))
+	pad := max(1, m.width-lipgloss.Width(label)-subWidth)
+	return label, strings.Repeat(" ", pad) + e.sub
+}
+
+func (m *model) listRow(index int, line string) string {
+	if index == m.cursor {
+		return styleSelected.Width(max(0, m.width)).Render(truncate(strip(line), m.width))
 	}
 	return line
 }
 
 func (m *model) renderDetail(b *strings.Builder) {
 	if m.detail == nil {
-		b.WriteString("(nothing selected)")
+		b.WriteString(styleEmpty.Render("(nothing selected)"))
 		return
 	}
 	visible := m.visibleRows()
@@ -545,38 +597,42 @@ func (m *model) renderDetail(b *strings.Builder) {
 	last := min(first+visible, len(m.detail.lines))
 	rows := make([]string, 0, last-first)
 	for i := first; i < last; i++ {
-		rows = append(rows, truncate(m.detail.lines[i], m.width))
+		line := m.detail.lines[i]
+		text := truncate(line.text, m.width)
+		switch line.kind {
+		case lineContext:
+			rows = append(rows, styleDim.Render(text))
+		case lineRequest:
+			rows = append(rows, styleRequest.Render(text))
+		case lineResponse:
+			rows = append(rows, styleResponse.Render(text))
+		default:
+			rows = append(rows, text)
+		}
 	}
 	if len(rows) == 0 {
-		rows = append(rows, "(empty)")
+		rows = append(rows, styleEmpty.Render("(empty)"))
 	}
 	b.WriteString(strings.Join(rows, "\n"))
 }
 
-// renderText draws fixed lines, truncated to the terminal width.
-func (m *model) renderText(b *strings.Builder, lines []string) {
-	rows := make([]string, 0, len(lines))
-	for _, line := range lines {
-		rows = append(rows, truncate(line, m.width))
+func (m *model) renderMetadata(b *strings.Builder) {
+	rows := make([]string, 0, len(m.metadataView))
+	for _, row := range m.metadataView {
+		plain := fmt.Sprintf("%-26s", truncate(row.label+":", 26))
+		value := truncate(row.value, max(0, m.width-28))
+		rows = append(rows, styleDim.Render(plain)+" "+value)
 	}
 	b.WriteString(strings.Join(rows, "\n"))
 }
 
 func (m *model) renderUnmapped(b *strings.Builder) {
-	b.WriteString(wrapLines(
+	b.WriteString(styleDim.Render(wrapLines(
 		"This Burp tool's project structures have not been reverse engineered\n"+
 			"from the storage format yet.\n\n"+
 			"Currently verified mappings cover Proxy history, Repeater tabs and\n"+
 			"groups, and the Target/Site map identity index. See\n"+
-			"prub/ai-docs/format-specification.md for the field-level details.", m.width))
-}
-
-func (m *model) row(index int, line string) string {
-	line = truncate(line, m.width)
-	if index == m.cursor {
-		return reverse(pad(line, m.width))
-	}
-	return line
+			"prub/ai-docs/format-specification.md for the field-level details.", m.width)))
 }
 
 func (m *model) footer() string {
@@ -593,14 +649,17 @@ func (m *model) footer() string {
 	}
 	position := ""
 	if m.screen == screenList && m.current != nil && len(m.current.entries) > 0 {
-		position = fmt.Sprintf(" %d/%d", m.cursor+1, len(m.current.entries))
+		position = fmt.Sprintf("%d/%d", m.cursor+1, len(m.current.entries))
 	}
-	line := hints + position
-	return dim(pad(truncate(line, m.width), m.width))
+	left := hints
+	right := position
+	inner := m.width
+	line := joinSides(left, right, inner)
+	return styleFooter.Width(max(0, m.width)).Render(truncate(strip(line), m.width))
 }
 
 func (m *model) visibleRows() int {
-	// Header, blank line, footer, and one spare line of chrome.
+	// Header, divider, blank line, footer bar, and one spare line of chrome.
 	return max(1, m.height-5)
 }
 
@@ -619,10 +678,57 @@ func (m *model) clampOffset() {
 	if m.cursor >= m.offset+visible {
 		m.offset = m.cursor - visible + 1
 	}
-	m.offset = clamp(m.offset, 0, max(0, len(m.current.entries)-visible))
+	count := 0
+	if m.current != nil {
+		count = len(m.current.entries)
+	}
+	m.offset = clamp(m.offset, 0, max(0, count-visible))
 }
 
 // ---------------------------------------------------------------- helpers --
+
+// joinSides renders left and right on one line, right-aligned to width.
+// Both parts are already styled; alignment math uses their plain widths.
+func joinSides(left, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	rightWidth := lipgloss.Width(right)
+	plainLeft := strip(left)
+	avail := max(0, width-rightWidth)
+	// When both sides collide, truncate the left side but always keep at
+	// least one space of separation before the right side.
+	maxLeft := avail
+	if rightWidth > 0 && lipgloss.Width(plainLeft) > avail-1 {
+		maxLeft = max(0, avail-1)
+	}
+	if lipgloss.Width(plainLeft) > maxLeft {
+		// Overlong: fall back to the plain truncated form.
+		left = truncate(plainLeft, maxLeft)
+		plainLeft = left
+	}
+	pad := max(0, width-lipgloss.Width(plainLeft)-rightWidth)
+	return left + strings.Repeat(" ", pad) + right
+}
+
+// strip removes ANSI escape sequences (used before width-based re-wrapping).
+func strip(s string) string {
+	var b strings.Builder
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case inEscape:
+			if r == 'm' {
+				inEscape = false
+			}
+		case r == '\x1b':
+			inEscape = true
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
 
 func clamp(v, low, high int) int {
 	if v < low {
@@ -632,13 +738,6 @@ func clamp(v, low, high int) int {
 		return high
 	}
 	return v
-}
-
-func pad(s string, width int) string {
-	if missing := width - utf8.RuneCountInString(s); missing > 0 {
-		return s + strings.Repeat(" ", missing)
-	}
-	return s
 }
 
 func truncate(s string, max int) string {
@@ -663,10 +762,6 @@ func wrapLines(text string, width int) string {
 	}
 	return strings.Join(out, "\n")
 }
-
-func bold(s string) string    { return "\x1b[1m" + s + "\x1b[0m" }
-func dim(s string) string     { return "\x1b[2m" + s + "\x1b[0m" }
-func reverse(s string) string { return "\x1b[7m" + s + "\x1b[0m" }
 
 func humanBytes(n int64) string {
 	switch {
