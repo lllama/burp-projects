@@ -226,6 +226,24 @@ func (p *Project) Uint8Field(o *CompactObject, fieldID uint8) (uint8, bool, erro
 	return value, true, nil
 }
 
+// Int64Field reads a descriptor-backed signed 64-bit field.
+func (p *Project) Int64Field(o *CompactObject, fieldID uint8) (int64, bool, error) {
+	if err := p.requireNormal(o); err != nil {
+		return 0, false, err
+	}
+	field, ok := o.Field(fieldID)
+	if !ok {
+		return 0, false, nil
+	}
+	value, err := p.i64at(o.Offset + int64(field.RelativeOffset))
+	if err != nil {
+		return 0, false, formatError(
+			"int64 field %d at %d exceeds available data",
+			fieldID, o.Offset+int64(field.RelativeOffset))
+	}
+	return value, true, nil
+}
+
 // Uint64Field reads a descriptor-backed unsigned 64-bit field.
 func (p *Project) Uint64Field(o *CompactObject, fieldID uint8) (uint64, bool, error) {
 	if err := p.requireNormal(o); err != nil {
